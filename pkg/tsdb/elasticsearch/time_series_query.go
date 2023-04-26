@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Masterminds/semver"
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana/pkg/components/simplejson"
 	es "github.com/grafana/grafana/pkg/tsdb/elasticsearch/client"
@@ -143,7 +144,7 @@ func (e *timeSeriesQuery) processQuery(q *Query, ms *es.MultiSearchRequestBuilde
 					}
 
 					aggBuilder.Pipeline(m.ID, m.Type, bucketPaths, func(a *es.PipelineAggregation) {
-						a.Settings = m.generateSettingsForDSL()
+						a.Settings = m.generateSettingsForDSL(e.client.GetVersion())
 					})
 				} else {
 					continue
@@ -164,7 +165,7 @@ func (e *timeSeriesQuery) processQuery(q *Query, ms *es.MultiSearchRequestBuilde
 						}
 
 						aggBuilder.Pipeline(m.ID, m.Type, bucketPath, func(a *es.PipelineAggregation) {
-							a.Settings = m.generateSettingsForDSL()
+							a.Settings = m.generateSettingsForDSL(e.client.GetVersion())
 						})
 					}
 				} else {
@@ -173,7 +174,7 @@ func (e *timeSeriesQuery) processQuery(q *Query, ms *es.MultiSearchRequestBuilde
 			}
 		} else {
 			aggBuilder.Metric(m.ID, m.Type, m.Field, func(a *es.MetricAggregation) {
-				a.Settings = m.generateSettingsForDSL()
+				a.Settings = m.generateSettingsForDSL(e.client.GetVersion())
 			})
 		}
 	}
@@ -198,7 +199,7 @@ func setIntPath(settings *simplejson.Json, path ...string) {
 }
 
 // Casts values to float when required by Elastic's query DSL
-func (metricAggregation MetricAgg) generateSettingsForDSL() map[string]interface{} {
+func (metricAggregation MetricAgg) generateSettingsForDSL(version *semver.Version) map[string]interface{} {
 	switch metricAggregation.Type {
 	case "moving_avg":
 		setFloatPath(metricAggregation.Settings, "window")
@@ -218,8 +219,14 @@ func (metricAggregation MetricAgg) generateSettingsForDSL() map[string]interface
 			scriptValue, err = metricAggregation.Settings.GetPath("script", "inline").String()
 		}
 
+		constraint, _ := semver.NewConstraint(">=5.6.0")
+
 		if err == nil {
-			metricAggregation.Settings.SetPath([]string{"script"}, scriptValue)
+			if constraint.Check(version) {
+				metricAggregation.Settings.SetPath([]string{"script"}, scriptValue)
+			} else {
+				metricAggregation.Settings.SetPath([]string{"script"}, map[string]interface{}{"inline": scriptValue})
+			}
 		}
 	}
 

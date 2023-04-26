@@ -88,6 +88,9 @@ COPY --from=go-builder /grafana/bin/*/grafana-server /grafana/bin/*/grafana-cli 
 COPY --from=js-builder /grafana/public ./public
 COPY --from=js-builder /grafana/tools ./tools
 
+RUN grafana-cli plugins install grafana-clickhouse-datasource && \
+    grafana-cli plugins install vertamedia-clickhouse-datasource
+
 EXPOSE 3000
 
 COPY ./packaging/docker/run.sh /run.sh

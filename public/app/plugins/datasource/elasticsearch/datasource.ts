@@ -1,6 +1,7 @@
 import { cloneDeep, find, first as _first, isNumber, isObject, isString, map as _map } from 'lodash';
 import { generate, lastValueFrom, Observable, of, throwError } from 'rxjs';
 import { catchError, first, map, mergeMap, skipWhile, throwIfEmpty } from 'rxjs/operators';
+import { gte, lt, satisfies } from 'semver';
 
 import {
   DataFrame,
@@ -51,7 +52,7 @@ import { metricAggregationConfig } from './components/QueryEditor/MetricAggregat
 import { ElasticResponse } from './elastic_response';
 import { defaultBucketAgg, hasMetricOfType } from './queryDef';
 import { DataLinkConfig, ElasticsearchOptions, ElasticsearchQuery, TermsQuery } from './types';
-import { coerceESVersion, getScriptValue, isSupportedVersion } from './utils';
+import { coerceESVersion, getScriptValue } from './utils';
 
 // Those are metadata fields as defined in https://www.elastic.co/guide/en/elasticsearch/reference/current/mapping-fields.html#_identity_metadata_fields.
 // custom fields can start with underscores, therefore is not safe to exclude anything that starts with one.
@@ -115,6 +116,7 @@ export class ElasticDatasource
     this.maxConcurrentShardRequests = settingsData.maxConcurrentShardRequests;
     this.queryBuilder = new ElasticQueryBuilder({
       timeField: this.timeField,
+      esVersion: this.esVersion,
     });
     this.logMessageField = settingsData.logMessageField || '';
     this.logLevelField = settingsData.logLevelField || '';
@@ -144,13 +146,6 @@ export class ElasticDatasource
     if (!this.isProxyAccess) {
       const error = new Error(
         'Browser access mode in the Elasticsearch datasource is no longer available. Switch to server access mode.'
-      );
-      return throwError(() => error);
-    }
-
-    if (!isSupportedVersion(this.esVersion)) {
-      const error = new Error(
-        'Support for Elasticsearch versions after their end-of-life (currently versions < 7.10) was removed.'
       );
       return throwError(() => error);
     }
@@ -298,6 +293,11 @@ export class ElasticDatasource
       query,
       size: 10000,
     };
+
+    // fields field not supported on ES 5.x
+    if (lt(this.esVersion, '5.0.0')) {
+      data['fields'] = [timeField, '_source'];
+    }
 
     const header: any = {
       search_type: 'query_then_fetch',
@@ -458,6 +458,10 @@ export class ElasticDatasource
       index: this.indexPattern.getIndexList(timeFrom, timeTo),
     };
 
+    if (satisfies(this.esVersion, '>=5.6.0 <7.0.0')) {
+      queryHeader['max_concurrent_shard_requests'] = this.maxConcurrentShardRequests;
+    }
+
     return JSON.stringify(queryHeader);
   }
 
@@ -512,8 +516,13 @@ export class ElasticDatasource
     return text;
   }
 
+  /**
+   * This method checks to ensure the user is running a 5.0+ cluster. This is
+   * necessary bacause the query being used for the getLogRowContext relies on the
+   * search_after feature.
+   */
   showContextToggle(): boolean {
-    return true;
+    return gte(this.esVersion, '5.0.0');
   }
 
   getLogRowContext = async (row: LogRowModel, options?: RowContextOptions): Promise<{ data: DataFrame[] }> => {
@@ -675,7 +684,7 @@ export class ElasticDatasource
 
       const esQuery = JSON.stringify(queryObj);
 
-      const searchType = 'query_then_fetch';
+      const searchType = queryObj.size === 0 && lt(this.esVersion, '5.0.0') ? 'count' : 'query_then_fetch';
       const header = this.getQueryHeader(searchType, options.range.from, options.range.to);
       payload += header + '\n';
 
@@ -792,8 +801,15 @@ export class ElasticDatasource
           if (index && index.mappings) {
             const mappings = index.mappings;
 
-            const properties = mappings.properties;
-            getFieldsRecursively(properties);
+            if (lt(this.esVersion, '7.0.0')) {
+              for (const typeName in mappings) {
+                const properties = mappings[typeName].properties;
+                getFieldsRecursively(properties);
+              }
+            } else {
+              const properties = mappings.properties;
+              getFieldsRecursively(properties);
+            }
           }
         }
 
@@ -806,7 +822,7 @@ export class ElasticDatasource
   }
 
   getTerms(queryDef: TermsQuery, range = getDefaultTimeRange()): Observable<MetricFindValue[]> {
-    const searchType = 'query_then_fetch';
+    const searchType = gte(this.esVersion, '5.0.0') ? 'query_then_fetch' : 'count';
     const header = this.getQueryHeader(searchType, range.from, range.to);
     let esQuery = JSON.stringify(this.queryBuilder.getTermsQuery(queryDef));
 
@@ -836,11 +852,11 @@ export class ElasticDatasource
   getMultiSearchUrl() {
     const searchParams = new URLSearchParams();
 
-    if (this.maxConcurrentShardRequests) {
+    if (gte(this.esVersion, '7.0.0') && this.maxConcurrentShardRequests) {
       searchParams.append('max_concurrent_shard_requests', `${this.maxConcurrentShardRequests}`);
     }
 
-    if (this.xpack && this.includeFrozen) {
+    if (gte(this.esVersion, '6.6.0') && this.xpack && this.includeFrozen) {
       searchParams.append('ignore_throttled', 'false');
     }
 

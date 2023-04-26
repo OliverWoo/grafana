@@ -99,7 +99,7 @@ export const getScriptValue = (metric: MetricAggregationWithInlineScript) =>
  * It takes care of also converting from the legacy format (numeric) to the new one.
  * @param version
  */
-export const coerceESVersion = (version: string | number | undefined): string => {
+export const coerceESVersion = (version: string | number): string => {
   if (typeof version === 'string') {
     return valid(version) || '8.0.0';
   }
@@ -120,10 +120,10 @@ export const coerceESVersion = (version: string | number | undefined): string =>
   }
 };
 
-export const isSupportedVersion = (version: string): boolean => {
+export const isDeprecatedVersion = (version: string): boolean => {
   if (gte(version, '7.10.0')) {
-    return true;
+    return false;
   }
 
-  return false;
+  return true;
 };

@@ -111,7 +111,11 @@ export class ElasticQueryBuilder {
 
     const interval = settings.interval === 'auto' ? '${__interval_ms}ms' : settings.interval;
 
-    esAgg.fixed_interval = interval;
+    if (lt(this.esVersion, '8.0.0')) {
+      esAgg.interval = interval;
+    } else  {
+      esAgg.fixed_interval = interval;
+    }
 
     return esAgg;
   }

@@ -1,6 +1,6 @@
 FROM node:16-alpine3.15 as js-builder
 
-ENV NODE_OPTIONS=--max_old_space_size=8000
+ENV NODE_OPTIONS=--max_old_space_size=12000
 
 WORKDIR /grafana
 
@@ -8,8 +8,10 @@ COPY package.json yarn.lock .yarnrc.yml ./
 COPY .yarn .yarn
 COPY packages packages
 COPY plugins-bundled plugins-bundled
-
-RUN yarn install
+RUN yarn config set npmAlwaysAuth false && \
+    yarn config set networkConcurrency 50 && \
+    yarn config set enableInlineBuilds true && \
+    yarn install --inline-builds
 
 COPY tsconfig.json .eslintrc .editorconfig .browserslistrc .prettierrc.js babel.config.json .linguirc ./
 COPY public public
@@ -18,7 +20,10 @@ COPY scripts scripts
 COPY emails emails
 
 ENV NODE_ENV production
-RUN yarn build
+RUN yarn config set npmAlwaysAuth false && \
+    yarn config set networkConcurrency 50 && \
+    yarn config set enableInlineBuilds true && \
+    yarn build
 
 FROM golang:1.19.2-alpine3.15 as go-builder
 
@@ -26,6 +31,7 @@ RUN apk add --no-cache gcc g++ make
 
 WORKDIR /grafana
 
+ENV GOPROXY https://goproxy.cn
 COPY go.mod go.sum embed.go Makefile build.go package.json ./
 COPY packages/grafana-schema packages/grafana-schema
 COPY public/app/plugins public/app/plugins
